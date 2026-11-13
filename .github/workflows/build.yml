@@ -10,18 +10,29 @@ on:
         type: choice
         options: [lmi, alioth, apollo, cas, cmi, dagu, elish, enuma, munch, pipa, psyche, umi]
 
+env:
+  CLANG_URL: https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260510-release/Clang-16.0.6-20260510.tar.gz
+
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld llvm flex bison bc libssl-dev libelf-dev cpio python3 zip
+          sudo apt-get install -y flex bison bc libssl-dev libelf-dev cpio python3 zip
+
+      - name: Setup ZyC Clang 16
+        run: |
+          mkdir -p $HOME/zyc-clang
+          wget -q "$CLANG_URL" -O /tmp/clang.tar.gz
+          tar -xzf /tmp/clang.tar.gz -C $HOME/zyc-clang
+          echo "$HOME/zyc-clang/bin" >> $GITHUB_PATH
+          $HOME/zyc-clang/bin/clang --version | head -1
 
       - name: Fix relative include paths for O=out build
         run: |
@@ -31,27 +42,39 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          MK="O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+          MK="O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           make $MK vendor/kona-perf_defconfig vendor/xiaomi/sm8250-common.config vendor/xiaomi/${{ inputs.device }}.config
           make $MK -j$(nproc) 2>&1 | tee build.log
 
       - name: Upload log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: build-log-${{ inputs.device }}-${{ github.run_number }}
           path: build.log
 
-      - name: Collect
+      - name: Package AnyKernel3
         run: |
-          mkdir -p dist
-          cp out/arch/arm64/boot/Image dist/
-          cp out/arch/arm64/boot/dtbo.img dist/ || true
-          cat out/arch/arm64/boot/dts/vendor/qcom/*.dtb > dist/dtb || true
-          ls -la dist
+          git clone --depth 1 -b kona https://github.com/liyafe1997/AnyKernel3 anykernel
+          rm -rf anykernel/.git
+          mkdir -p anykernel/kernels
+          cp out/arch/arm64/boot/Image anykernel/kernels/Image
+          ZIP="Kernel_${{ inputs.device }}_$(date +%Y%m%d_%H%M)_$(git rev-parse --short=8 HEAD)_AK3.zip"
+          (cd anykernel && zip -r9 "../$ZIP" . -x '*.zip')
+          echo "ZIP=$ZIP" >> $GITHUB_ENV
+          unzip -l "$ZIP" | tail -n 3
 
-      - name: Upload kernel
-        uses: actions/upload-artifact@v4
+      - name: Upload AnyKernel3 zip
+        uses: actions/upload-artifact@v5
         with:
-          name: kernel-${{ inputs.device }}-${{ github.run_number }}
-          path: dist/
+          name: ${{ env.ZIP }}
+          path: ${{ env.ZIP }}
+          compression-level: 0
+
+      - name: Upload raw images
+        uses: actions/upload-artifact@v5
+        with:
+          name: raw-${{ inputs.device }}-${{ github.run_number }}
+          path: |
+            out/arch/arm64/boot/Image
+            out/arch/arm64/boot/dtbo.img
