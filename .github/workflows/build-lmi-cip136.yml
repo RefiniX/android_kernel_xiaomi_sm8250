@@ -1,6 +1,6 @@
 name: Build lmi 0821 + cip136
 
-# 編本分支：0821 正式版 + 作者 7/26 的 lz4 x18 修正（cherry-pick aef72b3c）+ CIP v4.19.325-cip136
+# 編本分支：0821 正式版 + 作者 7/26 的 lz4 x18 修正（cherry-pick aef72b3c）+ CIP v4.19.325-cip136 + 休眠前不 sync
 # 編譯時下載的東西固定在 0821 當時的版本（ReSukiSU 35088、Baseband-guard a54e0dc6、AnyKernel3 取自官方 0821 zip）
 
 on:
@@ -101,8 +101,9 @@ jobs:
             echo '```'
             git log --oneline -1
             strings out_aosp/arch/arm64/boot/Image | grep -m1 'Linux version' || true
-            grep -E '^(# )?CONFIG_(SHADOW_CALL_STACK|LTO_CLANG|CFI_CLANG|KFENCE|KSU|KSU_SUSFS|BBG)[= ]' "$C" || true
+            grep -E '^(# )?CONFIG_(SHADOW_CALL_STACK|LTO_CLANG|CFI_CLANG|KFENCE|KSU|KSU_SUSFS|BBG|SUSPEND_SKIP_SYNC)[= ]' "$C" || true
             grep -m2 -E 'version (code|name):' build.log || true
+            grep -q '^CONFIG_SUSPEND_SKIP_SYNC=y' "$C" && echo "skip sync: on" || echo "skip sync: OFF"
             if [ -n "$OBJ" ]; then
               echo "lz4armv8.o x18 uses: $($HOME/zyc-clang/bin/llvm-objdump -d "$OBJ" | grep -cE '\b[xw]18\b' || true)"
             else
