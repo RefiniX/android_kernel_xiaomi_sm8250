@@ -1,0 +1,57 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 'Device codename'
+        required: true
+        default: 'lmi'
+        type: choice
+        options: [lmi, alioth, apollo, cas, cmi, dagu, elish, enuma, munch, pipa, psyche, umi]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm flex bison bc libssl-dev libelf-dev cpio python3 zip
+
+      - name: Fix relative include paths for O=out build
+        run: |
+          grep -rlZ --include=Kbuild --include=Makefile -F -e '-I$(src)/' techpack drivers sound \
+            | xargs -0 sed -i 's#-I\$(src)/#-I$(srctree)/$(src)/#g'
+
+      - name: Build
+        run: |
+          set -o pipefail
+          MK="O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+          make $MK vendor/kona-perf_defconfig vendor/xiaomi/sm8250-common.config vendor/xiaomi/${{ inputs.device }}.config
+          make $MK -j$(nproc) 2>&1 | tee build.log
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ inputs.device }}-${{ github.run_number }}
+          path: build.log
+
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp out/arch/arm64/boot/Image dist/
+          cp out/arch/arm64/boot/dtbo.img dist/ || true
+          cat out/arch/arm64/boot/dts/vendor/qcom/*.dtb > dist/dtb || true
+          ls -la dist
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ inputs.device }}-${{ github.run_number }}
+          path: dist/
