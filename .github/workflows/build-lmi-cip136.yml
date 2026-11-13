@@ -54,7 +54,10 @@ jobs:
       - name: Check source
         run: |
           S=lib/lz4/lz4armv8/lz4armv8.S
-          if grep -nE '\b[xw]18\b' "$S"; then echo "x18 still used in $S"; exit 1; fi
+          # 只看程式碼，略過註解（作者的修正 commit 有一段註解提到 x18）
+          if grep -vE '^[[:space:]]*(/?\*|//)' "$S" | grep -nE '\b[xw]18\b'; then echo "x18 still used in $S"; exit 1; fi
+          n=$(grep -cE '^#define[[:space:]]+(w_)?tmp_match_length[[:space:]]+[xw]6$' "$S" || true)
+          if [ "$n" -ne 2 ]; then echo "lz4 fix not found ($n)"; exit 1; fi
           cat localversion-cip
           git log --oneline -3
 
