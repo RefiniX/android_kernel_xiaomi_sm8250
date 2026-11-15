@@ -1,0 +1,131 @@
+name: Build lmi 0821 + cip136 + DC values + goodix notifier
+
+# 編本分支：0821 正式版 + 作者 7/26 的 lz4 x18 修正（cherry-pick aef72b3c）+ CIP v4.19.325-cip136 + 休眠前不 sync
+# 編譯時下載的東西固定在 0821 當時的版本（ReSukiSU 35088、Baseband-guard a54e0dc6、AnyKernel3 取自官方 0821 zip）
+
+on:
+  push:
+    branches: [feature/lmi-gf-drm-notifier]
+
+env:
+  SRC_TAG: v20260821-a8adb967
+  KSU_COMMIT: 746686390b0cf2256818a97b2f620eadbd079995
+  BBG_COMMIT: a54e0dc6cf0aff4dd87fec49644a02d2eb612905
+  AK3_ZIP: https://github.com/AstideLabs/android_kernel_xiaomi_sm8250/releases/download/v20260821-a8adb967/APTKernel_AOSP_lmi_ReSukiSU-SuSFS_20260821_101453_anykernel3_a8adb967.zip
+  FIX: cip136-dcvals-gfnotif
+  KSU: 'true'
+
+jobs:
+  build:
+    name: lmi aosp | 0821+lz4+cip136+dc values+gf notifier
+    runs-on: ubuntu-24.04  # ubuntu-latest 已是 26.04，liblz4-tool、libxml2 套件改名；0821 當時是 24.04
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Checkout this branch (0821 + lz4 fix + cip136)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex gawk \
+            git gnupg gperf imagemagick libncurses-dev \
+            lib32readline-dev lib32z1-dev liblz4-tool \
+            libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc zip unzip zlib1g-dev python3
+
+      - name: Setup zyc-clang 16 (same as official 0821)
+        run: |
+          mkdir -p $HOME/zyc-clang
+          cd $HOME/zyc-clang
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
+          tar -zxf Clang-16.0.6-20260807.tar.gz
+          rm -f Clang-16.0.6-20260807.tar.gz
+
+      - name: Check source
+        run: |
+          S=lib/lz4/lz4armv8/lz4armv8.S
+          # 只看程式碼，略過註解（作者的修正 commit 有一段註解提到 x18）
+          if grep -vE '^[[:space:]]*(/?\*|//)' "$S" | grep -nE '\b[xw]18\b'; then echo "x18 still used in $S"; exit 1; fi
+          n=$(grep -cE '^#define[[:space:]]+(w_)?tmp_match_length[[:space:]]+[xw]6$' "$S" || true)
+          if [ "$n" -ne 2 ]; then echo "lz4 fix not found ($n)"; exit 1; fi
+          cat localversion-cip
+          git log --oneline -3
+
+      - name: Pin downloads in build_kernel.sh
+        run: |
+          python3 - <<'EOF'
+          import os
+          p = "build_kernel.sh"
+          s = open(p).read()
+          ksu, bbg, ak3 = os.environ["KSU_COMMIT"], os.environ["BBG_COMMIT"], os.environ["AK3_ZIP"]
+          rep = [
+              ('curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash',
+               f'curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/{ksu}/kernel/setup.sh" | bash -s {ksu}'),
+              ('wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash',
+               f'git clone https://github.com/vc-teahouse/Baseband-guard Baseband-guard\n'
+               f'wget -O- https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/{bbg}/setup.sh | bash -s {bbg}'),
+              ('git clone https://github.com/AstideLabs/AnyKernel3 -b kona --single-branch --depth=1 anykernel',
+               f'mkdir -p anykernel && curl -LSs -o ak3_official.zip "{ak3}" && unzip -q ak3_official.zip -d anykernel && rm -f ak3_official.zip'),
+          ]
+          for a, b in rep:
+              assert s.count(a) == 1, "not found: " + a
+              s = s.replace(a, b)
+          open(p, "w").write(s)
+          print("build_kernel.sh patched")
+          EOF
+          bash -n build_kernel.sh
+          grep -nE 'setup.sh|ak3_official|Baseband-guard Baseband-guard' build_kernel.sh
+
+      - name: Build
+        run: |
+          chmod +x build_kernel.sh
+          ARGS="lmi aosp"
+          if [ "$KSU" == "true" ]; then ARGS="lmi ksu aosp"; fi
+          ./build_kernel.sh $ARGS 2>&1 | tee build.log
+          for f in APTKernel_*.zip; do mv "$f" "${f%.zip}_fix-${FIX}.zip"; done
+          ls -la APTKernel_*.zip
+
+      - name: Check result
+        run: |
+          C=out_aosp/.config
+          OBJ=$(find out_aosp -name 'lz4armv8.o' | head -1)
+          {
+            echo "## lmi 0821 fix=$FIX ksu=$KSU"
+            echo '```'
+            git log --oneline -1
+            strings out_aosp/arch/arm64/boot/Image | grep -m1 'Linux version' || true
+            grep -E '^(# )?CONFIG_(SHADOW_CALL_STACK|LTO_CLANG|CFI_CLANG|KFENCE|KSU|KSU_SUSFS|BBG|SUSPEND_SKIP_SYNC)[= ]' "$C" || true
+            grep -m2 -E 'version (code|name):' build.log || true
+            grep -q '^CONFIG_SUSPEND_SKIP_SYNC=y' "$C" && echo "skip sync: on" || echo "skip sync: OFF"
+            if [ -n "$OBJ" ]; then
+              echo "lz4armv8.o x18 uses: $($HOME/zyc-clang/bin/llvm-objdump -d "$OBJ" | grep -cE '\b[xw]18\b' || true)"
+            else
+              echo "lz4armv8.o not found"
+            fi
+            G=$(find out_aosp -path '*goodix_fod*' -name 'gf_spi.o' | head -1)
+            if [ -n "$G" ]; then echo "goodix_fod gf_spi.o mi_drm_register_client refs: $($HOME/zyc-clang/bin/llvm-nm "$G" | grep -c mi_drm_register_client || true)"; else echo "goodix_fod gf_spi.o not found"; fi
+            grep -E '^CONFIG_FINGERPRINT_GOODIX_FOD=' "$C" || echo "CONFIG_FINGERPRINT_GOODIX_FOD not set"
+            sha256sum out_aosp/arch/arm64/boot/Image APTKernel_*.zip
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: APTKernel-lmi-0821-lz4-cip136-dcvals-gfnotif-ksu-${{ env.KSU }}-${{ github.run_number }}
+          path: |
+            APTKernel_*.zip
+            out_aosp/.config
+            out_aosp/System.map
+            build.log
+          compression-level: 0
