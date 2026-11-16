@@ -130,6 +130,12 @@ int sde_cp_crtc_get_property(struct drm_crtc *crtc,
 void sde_cp_crtc_suspend(struct drm_crtc *crtc);
 
 /**
+ * sde_cp_crtc_refresh_pcc: Re-apply the active PCC on the next commit
+ * @crtc: Pointer to crtc.
+ */
+void sde_cp_crtc_refresh_pcc(struct drm_crtc *crtc);
+
+/**
  * sde_cp_crtc_resume: Resume the crtc features
  * @crtc: Pointer to crtc.
  */

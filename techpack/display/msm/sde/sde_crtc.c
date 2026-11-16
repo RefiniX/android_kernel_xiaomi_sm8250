@@ -3273,6 +3273,20 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 
 		cstate = to_sde_crtc_state(crtc->state);
 		fod_sync_info = sde_crtc_get_mi_fod_sync_info(cstate);
+		/*
+		 * The composer never sets mi_fod_sync_info here, so PCC dimming
+		 * (DC dimming, night light) would also darken the fingerprint
+		 * circle. Treat the FOD dim layer as the HBM overlay instead:
+		 * re-apply PCC so it is cleared on the frame that shows the
+		 * circle and restored on the frame that removes it.
+		 */
+		if (cstate->fod_dim_layer)
+			fod_sync_info |= MI_DIMLAYER_FOD_HBM_OVERLAY;
+		if ((fod_sync_info ^ sde_crtc->mi_dimlayer_type) &
+				MI_DIMLAYER_FOD_HBM_OVERLAY) {
+			SDE_EVT32(DRMID(crtc), fod_sync_info);
+			sde_cp_crtc_refresh_pcc(crtc);
+		}
 		sde_crtc->mi_dimlayer_type = fod_sync_info;
 
 		sde_cp_crtc_apply_properties(crtc);

@@ -2248,6 +2248,28 @@ void sde_cp_crtc_suspend(struct drm_crtc *crtc)
 		sde_cp_ad_set_prop(sde_crtc, AD_SUSPEND);
 }
 
+void sde_cp_crtc_refresh_pcc(struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc = NULL;
+	struct sde_cp_node *prop_node = NULL, *n = NULL;
+
+	if (!crtc) {
+		DRM_ERROR("crtc %pK\n", crtc);
+		return;
+	}
+	sde_crtc = to_sde_crtc(crtc);
+
+	mutex_lock(&sde_crtc->crtc_cp_lock);
+	list_for_each_entry_safe(prop_node, n, &sde_crtc->active_list,
+				 active_list) {
+		if (prop_node->feature != SDE_CP_CRTC_DSPP_PCC)
+			continue;
+		sde_cp_update_list(prop_node, sde_crtc, true);
+		list_del_init(&prop_node->active_list);
+	}
+	mutex_unlock(&sde_crtc->crtc_cp_lock);
+}
+
 void sde_cp_crtc_resume(struct drm_crtc *crtc)
 {
 	/* placeholder for operations needed during resume */
